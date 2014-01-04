@@ -6,9 +6,38 @@ import readline
 import threading
 import paramiko
 import socket
+import ConfigParser
 
 
-# 
+
+
+# split items in command line into array
+def SplitItems(line):
+	line = line.strip()
+	while line.find('  ') != -1:
+		line = line.replace('  ', ' ')
+	return filter(lambda x: bool(x), line.split(' '))
+
+
+
+# return array of NodeConfig for all nodes in the configuration file
+def ParseConfigINI(ConfigFile):
+	nodes = []
+	config = ConfigParser.ConfigParser()
+	config.read([ConfigFile])
+
+	for Node in config.sections():
+		nodes.append(
+			NodeConfig(
+				Name = Node,
+				Address = config.get(Node, 'Address'),
+				Username = config.get(Node, 'Username'),
+				#Password = config.get(Node, 'Password'),
+				#Port = config.get(Node, 'Port'),
+				))
+	return nodes
+
+# command with output
 class Command(object):
 	def __init__(self, ssh, command):
 		self._ssh = ssh
@@ -157,37 +186,74 @@ def docfix(method):
 class Pash(cmd.Cmd):
 	def __init__(self):
 		cmd.Cmd.__init__(self)
-		self.prompt = '\001\033[00;36m\002pash>\001\033[0m\002 '
+		#self.prompt = '\001\033[00;36m\002pash>\001\033[0m\002 '
+		self.SetPrompt()
 		self.nodes = []
-		self.selected = []
 		
 		self.confdir = os.path.join(os.path.expanduser('~'), '.pash')
 		self.histfile = os.path.join(self.confdir, 'history')
-		self.nodesconf = os.path.join(self.confdir, 'nodes.conf')
 		if not os.path.isdir(self.confdir):
 			os.makedirs(self.confdir)
 
+	
+	# set colored prompt
+	def SetPrompt(self, name=None):
+		self.prompt = '\001\033[00;36m\002pash>\001\033[0m\002 '
+		if name:
+			self.prompt = '\001\033[00;36m\002pash@{}>\001\033[0m\002 '.format(name)
 
 
-	def load_nodes(self):
-		if os.path.exists(self.nodesconf):
-			with open(self.nodesconf, 'r') as f:
-				for line in f:
-					line = line.strip()
-					if line.startswith('#'):
-						continue
-					self.do_add(line)
+	# get list of platform names configured in .ini files
+	def BundleNames(self):
+		Root = os.path.abspath(os.path.join(os.path.expanduser('~'), '.pash'))
+		Bundles = []
+		for DirPath, DirNames, FileNames in os.walk(Root):
+			for FileName in FileNames:
+				if FileName.endswith('.ini'):
+					Bundles.append(FileName[:-4])
+		return Bundles
 
-	def save_nodes(self):
-		if os.path.isdir(self.confdir):
-			with open(self.nodesconf, 'w+') as f:
-				for node in map(lambda x: x.config, self.nodes):
-					data = 'name={} address={} username={} auto={}'.format(node.Name, node.Address, node.Username, node.Auto)
-					data += ' ' + ' '.join(map(lambda x: 'group={}'.format(x), node.Group))
-					if node.Password:
-						data += ' password={}'.format(node.Password)
-					f.write(data)
-					f.write('\n')
+
+	def do_use(self, line):
+		'''
+		Usage: use platform
+
+		(Re)load configuration from local file or remote server;
+		This command makes the daemon to read nodes.xml and hosts
+		files either from local files in current directory or
+		from a remote host.
+		'''
+		Items = SplitItems(line)
+		# disconnect nodes currently connected group (if any)
+		for node in self.nodes:
+			node.disconnect()
+		for node in self.nodes:
+			node.exit()
+		self.nodes = []
+
+		SearchName = '.'.join((Items[0], 'ini'))
+		IniFile = []
+		Root = os.path.abspath(os.path.join(os.path.expanduser('~'), '.pash'))
+		for DirPath, DirNames, FileNames in os.walk(Root):
+			if SearchName in FileNames:
+				IniFile = os.path.join(DirPath, SearchName)
+				self.platform = Items[0]
+				break
+
+		if IniFile:
+			print 'Loading platform configuration...'
+			for NodeConfig in ParseConfigINI(IniFile):
+				node = Node(NodeConfig)
+				node.connect()
+				self.nodes.append(node)
+				#self.nodes.append(Node(NodeConfig))
+				self.SetPrompt(Items[0])
+			print
+
+		
+
+	def complete_use(self, text, line, begidx, endidx):
+		return filter(lambda x: x.startswith(text), self.BundleNames())
 
 
 	# make sure history file is used
@@ -196,9 +262,6 @@ class Pash(cmd.Cmd):
 		if os.path.exists(self.histfile):
 			readline.read_history_file(self.histfile)
 
-		# load nodes
-		self.load_nodes()
-
 		# automatically connect nodes at startup
 		for node in self.nodes:
 			if node.config.Auto:
@@ -206,9 +269,6 @@ class Pash(cmd.Cmd):
 				node.connect()
 
 		cmd.Cmd.cmdloop(self)
-
-		# save nodes
-		self.save_nodes()
 
 		# save command history
 		readline.write_history_file(self.histfile)
@@ -223,128 +283,21 @@ class Pash(cmd.Cmd):
 			be executed on connected nodes only.
 			As a shortcut to "shell" command, "!" can be used (without quotes).
 		'''
-		for node in self.selected:
-			if node.connected():
-				node.shrun(line)
+		for node in filter(lambda n: n.connected(), self.nodes):
+			node.shrun(line)
 
-		for node in self.selected:
-			if node.connected:
-				node.shwait()
+		for node in filter(lambda n: n.connected(), self.nodes):
+			node.shwait()
+
+		# calculate node names length
+		maxlen = max(map(lambda x: len(x.config.Name), self.nodes)) + 14
+		template = '{{:>{}}}: {{}}'.format(maxlen)
 
 		# print command output
-		for node in self.selected:
-			if node.connected():
-				for line in node.last_cmd_output():
-					print '{:>20}: {}'.format('\033[0;35m{}\033[0m'.format(node.config.Name), line)
+		for node in filter(lambda n: n.connected(), self.nodes):
+			for line in node.last_cmd_output():
+				print template.format('\033[0;35m{}\033[0m'.format(node.config.Name), line)
 
-	@docfix
-	def do_add(self, line):
-		'''
-		Usage: add username=... password=... address=... port=...
-
-			Add a node to running configuration. After command shell is closed,
-			saved configuration will be updated as well.
-			Available options for configuration are:
-				name		Unique node name (or hostname). This is only
-						used to identify the node amongst all other
-						nodes.
-				username	Username to use when connecting to the node.
-				password	Password for the specified username.
-				address		IP address of node.
-				port		SSH port at which node's SSH daemon is listening.
-				group		The node will be part of the specified group.
-						More than one can be specified with separate
-						"group=..." arguments.
-				auto		Node will automatically connect at startup.
-		'''
-		while line.find('\t') != -1:
-			line = line.replace('\t', ' ')
-		while line.find('  ') != -1:
-			line = line.replace('  ', ' ')
-		items = line.split(' ')
-
-		config = {}
-		for item in items:
-			if not item.find('='):
-				print 'syntax error: {}'.format(line)
-				return
-			key, value = item.split('=', 1)
-			key = key.capitalize()
-			if key == 'Group':
-				if not config.get('Group'):
-					config[key] = []
-				config[key].append(value)
-			else:
-				config[key] = value
-
-		if filter(lambda x: config.get('Name') == x.config.Name, self.nodes):
-			print 'node already exists'
-			return
-		self.nodes.append(Node(NodeConfig(**config)))
-
-
-	# autocomplete for add command
-	def complete_add(self, text, line, begidx, endidx):
-		line = line.strip()
-		line = line.replace('\t', ' ')
-		while line.find('  ') != -1:
-			line = line.replace('  ', ' ')
-		items = line.split(' ')
-
-		if line.endswith('='):
-			return []
-
-		# list of all possible arguments
-		full = ['name', 'username', 'password', 'address', 'port', 'group', 'auto']
-
-		# filter out repetitive options (name, username, port, address, noauto)
-		for item in items:
-			if item.find('=') != -1:
-				key, value = item.split('=')
-				key = key.lower()
-				if not key == 'group' and key in full:
-					full.remove(key)
-
-		# autocomplete argument
-		return map(
-			lambda x: x+'=',
-			filter(
-				lambda x: x.startswith(text),
-				full))
-
-
-	@docfix
-	def do_remove(self, line):
-		'''
-		Usage: remove [all] [host1] [host2] [GROUP1] [GROUP2] [...]
-
-		Remove hosts and/or groups from running configuration.
-		After command shell is closed, nodes will be removed from saved
-		configuration as well.
-		'''
-
-		# make data easier to process
-		line = line.strip()
-		while line.find('  ') != -1:
-			line = line.replace('  ', ' ')
-		Items = line.split(' ')
-
-		for Item in Items:
-			for Node in filter(lambda x: Item == x.Config.Name or Item in x.Config.Bundle, self.group.Nodes):
-				Node.Disconnect()
-				Node.Exit()
-				self.group.Nodes.remove(Node)
-
-	# autocomplete for remove command
-	def complete_remove(self, text, line, begidx, endidx):
-		NodeList = set()
-		GroupList = set()
-		for Node in self.nodes:
-			NodeList.add(Node.config.Name)
-			GroupList.update(Node.config.Group)
-
-		FullList = ['all'] + list(NodeList) + list(GroupList)
-		return filter(lambda x: x.startswith(text), FullList)
 
 
 	# connect to a node or a group
@@ -360,15 +313,11 @@ class Pash(cmd.Cmd):
 			or because a new node has just been added with the "add"
 			command.
 		'''
-		while line.find('\t') != -1:
-			line = line.find('\t', ' ')
-		while line.find('  ') != -1:
-			line = line.replace('  ', ' ')
-		items = line.split(' ')
+		items = SplitItems(line)
 
 		for item in items:
 			for node in self.nodes:
-				if item == node.config.Name or item in node.config.Group:
+				if item == node.config.Name:
 					print 'connecting to node:', node.config.Name
 					node.connect()
 
@@ -380,40 +329,27 @@ class Pash(cmd.Cmd):
 
 			Terminate ssh connection to nodes.
 		'''
-		while line.find('\t') != -1:
-			line = line.find('\t', ' ')
-		while line.find('  ') != -1:
-			line = line.replace('  ', ' ')
-		items = line.split(' ')
+		items = SplitItems(line)
 
 		for item in items:
 			for node in self.nodes:
-				if item == node.config.Name or item in node.config.Group:
+				if item == node.config.Name:
 					print 'disconnecting node:', node.config.Name
 					node.disconnect()
 
 
-	@docfix
-	def do_list(self, line):
-		'''
-		Usage: list
-		
-			Display a list of all configured nodes and
-			their connection status.
-			Displayed filds include:
-				Hostname	Name (or hostname) of the node
-				Address		Node IP address
-				CON		Connection status - ("Yes" for connected,
-						"No" for disconnected)
-				SEL		Selected status ("Yes" for selected, "No"
-						for not selected. Shell commands will be
-						executed on selected nodes only.
-				Group		Node group the current node is in. A node
-						can be in more than one group.
-				ACo		AutoConnect status ("Yes" for autoconnect
-						at startup, "No" for no autoconnect)
-		'''
+	def PrintHeader(self, Header):
+		print Header
+		print '=' * len(Header)
 
+
+	def ListBundles(self):
+		self.PrintHeader('Available Node Groups')
+		for Bundle in self.BundleNames():
+			print '  {}'.format(Bundle)
+
+
+	def ListNodes(self):
 		if not len(self.nodes):
 			print 'No nodes configured.'
 			return
@@ -430,24 +366,42 @@ class Pash(cmd.Cmd):
 					lambda x: len(x.config.Address),
 					self.nodes)),
 			7)
-		gsize = max(
-			max(
-				map(
-					lambda x: len(','.join(x.config.Group)),
-					self.nodes)),
-			5)
 
-		template = '{:>%d}  {:<%d}  {:<3}  {:<3}  {:>%d}  {:<3}' % (hsize, asize, gsize)
-		print template.format('Hostname', 'Address', 'CON', 'SEL', 'Group', 'ACo')
-		print template.format('-'*hsize, '-'*asize, '-'*3, '-'*3, '-'*gsize, '-'*3)
+		template = '{:>%d}  {:<%d}  {:<3}' % (hsize, asize)
+		print template.format('Hostname', 'Address', 'CON')
+		print template.format('-'*hsize, '-'*asize, '-'*3, '-'*3, '-'*3)
 		for node in self.nodes:
 			print template.format(
 				node.config.Name,
 				node.config.Address,
 				{True:'Yes', False:'No'}[node.connected()],
-				{True:'Yes', False:'No'}[node in self.selected],
-				','.join(getattr(node.config, 'Group', [])),
-					{True:'Yes', False:'No'}[node.config.Auto])
+				)
+
+
+	@docfix
+	def do_list(self, line):
+		'''
+		Usage: list [bundles]
+		
+			Display a list of all bundles or all nodes 
+			within the currently selected bundle and
+			node connection status.
+
+			When displaying nodes within a bundle, the
+			following fields are shown:
+				Hostname	Name (or hostname) of the node
+				Address		Node IP address
+				CON		Connection status - ("Yes" for connected,
+						"No" for disconnected)
+		'''
+		Items = SplitItems(line)
+
+		# list groups
+		if not len(self.nodes) or (len(Items) > 0 and 'bundles'.startswith(Items[0].lower())):
+			self.ListBundles()
+			return
+
+		self.ListNodes()
 
 
 	# exit main loop

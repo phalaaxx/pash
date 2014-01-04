@@ -27,29 +27,47 @@ Move/link binary
 Usage
 -----
 
+In order to use pash a configuration file with list of nodes needs to be created first:
+
+	$ mkdir ~/.pash
+	$ cat << EOF > ~/.pash/servers.ini
+	[server1]
+	address = 1.2.3.4
+	username = root
+
+	[server2]
+	address = 1.2.3.5
+	username = root
+
+	[server3]
+	address = 1.2.3.6
+	username = root
+
+	[server4]
+	address = 1.2.3.7
+	username = root
+	EOF
+
+
+Once created, pash can be used to connect to nodes listed in the configuration file:
+
 	$ pash
 
-	pash> add name=node1 address=1.2.3.4 auto=1 group=svrgr1
-	pash> add name=node2 address=1.2.3.5 auto=1 group=svrgr1
-	pash> add name=node3 address=1.2.3.6 auto=0 group=svrgr2
-	pash> add name=node4 address=1.2.3.7 auto=0 group=svrgr2
 	pash> list
-	Hostname  Address  CON  SEL   Group  ACo
-	--------  -------  ---  ---  ------  ---
-	   node1  1.2.3.4  No   No   svrgr1  No
-	   node2  1.2.3.5  No   No   svrgr1  No
-	   node3  1.2.3.6  No   No   svrgr2  No
-	   node4  1.2.3.7  No   No   svrgr2  No
-	pash> connect svrgr1 node3
-	pash> list
-	Hostname  Address  CON  SEL   Group  ACo
-	--------  -------  ---  ---  ------  ---
-	   node1  1.2.3.4  Yes  Yes  svrgr1  No
-	   node2  1.2.3.5  Yes  Yes  svrgr1  No
-	   node3  1.2.3.6  Yes  Yes  svrgr2  No
-	   node4  1.2.3.7  No   No   svrgr2  No
-	pash> !ls -d /bin
-	    node1: /bin
-	    node2: /bin
-	    node3: /bin
-	pash>
+	Available Node Groups
+	=====================
+	  servers
+	pash> use servers
+	pash@servers> list
+	  Hostname  Address  CON
+	----------  -------  ---
+	   server1  1.2.3.4  Yes
+	   server2  1.2.3.5  Yes
+	   server3  1.2.3.6  Yes
+	   server4  1.2.3.7  Yes
+	pash@servers> !ls -d /bin
+	    server1: /bin
+	    server2: /bin
+	    server3: /bin
+	    server4: /bin
+	pash@servers>
