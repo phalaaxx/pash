@@ -1,4 +1,5 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
+
 import cmd
 import os
 import time
@@ -6,7 +7,7 @@ import readline
 import threading
 import paramiko
 import socket
-import ConfigParser
+import configparser
 
 
 
@@ -16,14 +17,14 @@ def SplitItems(line):
 	line = line.strip()
 	while line.find('  ') != -1:
 		line = line.replace('  ', ' ')
-	return filter(lambda x: bool(x), line.split(' '))
+	return list(filter(lambda x: bool(x), line.split(' ')))
 
 
 
 # return array of NodeConfig for all nodes in the configuration file
 def ParseConfigINI(ConfigFile):
 	nodes = []
-	config = ConfigParser.ConfigParser()
+	config = configparser.ConfigParser()
 	config.read([ConfigFile])
 
 	for Node in config.sections():
@@ -107,8 +108,8 @@ class Node(threading.Thread):
 					#look_for_keys = True,
 					allow_agent = True,
 					)
-			except socket.error, e:
-				print 'Connect error:', e
+			except socket.error as e:
+				print('Connect error:', e)
 				return
 
 			self._connected = True
@@ -134,7 +135,7 @@ class Node(threading.Thread):
 
 	# wait for last command to complete
 	def shwait(self):
-		while len(filter(lambda x: not x.ready(), self._commands)):
+		while len(list(filter(lambda x: not x.ready(), self._commands))):
 			time.sleep(0.1)
 
 	# run all pending commands in queue
@@ -143,7 +144,7 @@ class Node(threading.Thread):
 			try:
 				cmd.run()
 			except:
-				print 'Error running command {}'.format(cmd)
+				print('Error running command {}'.format(cmd))
 				cmd.fail()
 
 	# exit from thread
@@ -174,9 +175,9 @@ def docfix(method):
 	def callback(*args, **kwarg):
 		return method(*args, **kwarg)
 
-	doclines = map(
+	doclines = list(map(
 		lambda x: x.replace('\t\t', '', 1),
-		method.__doc__.split('\n'))
+		method.__doc__.split('\n')))
 	callback.__doc__ = '\n'.join(doclines[1:-1])
 	
 	return callback
@@ -241,7 +242,7 @@ class Pash(cmd.Cmd):
 				break
 
 		if IniFile:
-			print 'Loading platform configuration...'
+			print('Loading platform configuration...')
 			for NodeConfig in ParseConfigINI(IniFile):
 				node = Node(NodeConfig)
 				node.connect()
@@ -296,7 +297,7 @@ class Pash(cmd.Cmd):
 		# print command output
 		for node in filter(lambda n: n.connected(), self.nodes):
 			for line in node.last_cmd_output():
-				print template.format('\033[0;35m{}\033[0m'.format(node.config.Name), line)
+				print(template.format('\033[0;35m{}\033[0m'.format(node.config.Name), line))
 
 
 
@@ -318,7 +319,7 @@ class Pash(cmd.Cmd):
 		for item in items:
 			for node in self.nodes:
 				if item == node.config.Name:
-					print 'connecting to node:', node.config.Name
+					print('connecting to node:', node.config.Name)
 					node.connect()
 
 	# disconnect from node
@@ -334,24 +335,24 @@ class Pash(cmd.Cmd):
 		for item in items:
 			for node in self.nodes:
 				if item == node.config.Name:
-					print 'disconnecting node:', node.config.Name
+					print('disconnecting node:', node.config.Name)
 					node.disconnect()
 
 
 	def PrintHeader(self, Header):
-		print Header
-		print '=' * len(Header)
+		print(Header)
+		print('=' * len(Header))
 
 
 	def ListBundles(self):
 		self.PrintHeader('Available Node Groups')
 		for Bundle in self.BundleNames():
-			print '  {}'.format(Bundle)
+			print('  {}'.format(Bundle))
 
 
 	def ListNodes(self):
 		if not len(self.nodes):
-			print 'No nodes configured.'
+			print('No nodes configured.')
 			return
 
 		hsize = max(
@@ -368,14 +369,14 @@ class Pash(cmd.Cmd):
 			7)
 
 		template = '{:>%d}  {:<%d}  {:<3}' % (hsize, asize)
-		print template.format('Hostname', 'Address', 'CON')
-		print template.format('-'*hsize, '-'*asize, '-'*3, '-'*3, '-'*3)
+		print(template.format('Hostname', 'Address', 'CON'))
+		print(template.format('-'*hsize, '-'*asize, '-'*3, '-'*3, '-'*3))
 		for node in self.nodes:
-			print template.format(
+			print(template.format(
 				node.config.Name,
 				node.config.Address,
 				{True:'Yes', False:'No'}[node.connected()],
-				)
+				))
 
 
 	@docfix
@@ -429,20 +430,20 @@ class Pash(cmd.Cmd):
 			command, rest = line.split(' ', 1)
 
 		# short commands
-		PossibleCommands = filter(
+		PossibleCommands = list(filter(
 			lambda x: x.startswith(command),
-			map(lambda x: x[3:], filter(lambda x: x.startswith('do_'), dir(self))))
+			map(lambda x: x[3:], filter(lambda x: x.startswith('do_'), dir(self)))))
 
 		if len(PossibleCommands) == 1:
 			Command = getattr(self, 'do_{}'.format(PossibleCommands.pop()))
 			return Command(rest)
 		if len(PossibleCommands):
-			print '*** Unknown syntax: {}'.format(command)
-			print '    Maybe you meant one of these: {}'.format(','.join(PossibleCommands))
+			print('*** Unknown syntax: {}'.format(command))
+			print('    Maybe you meant one of these: {}'.format(','.join(PossibleCommands)))
 			return
 
 		# unknown command
-		print '*** Unknown syntax: {}'.format(command)
+		print('*** Unknown syntax: {}'.format(command))
 
 
 # main program
