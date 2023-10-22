@@ -7,7 +7,7 @@ Parallel shell utility
 Requirements
 ------------
 
- * Python 2.7+
+ * Python 3.10+
  * python-readline
  * python-paramiko
 
